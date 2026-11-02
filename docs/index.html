@@ -108,6 +108,25 @@ body{background:var(--grass);color:var(--ink);font-family:var(--body);overflow:h
 .verdict{font-family:var(--display);font-size:clamp(26px,6vw,34px);line-height:1.05;margin:0;color:var(--navy);text-wrap:balance}
 .sub{margin:4px 0 0;color:var(--muted);font-size:15px}
 .pausebox{padding:22px;display:flex;flex-direction:column;gap:14px;align-items:flex-start}
+.entry{background:#e8f0fc;border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.entry p{margin:0;font-weight:600;color:var(--navy)}
+.entry .field input{width:min(100%,220px)}
+.entry .btn{font-size:17px;padding:10px 16px}
+.lbnote{margin:0;font-size:14px;color:var(--muted)}
+.boards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+@media (max-width:760px){.boards{grid-template-columns:1fr}}
+.board h3{font-family:var(--hud);font-weight:700;font-size:20px;margin:0 0 4px;color:var(--navy)}
+.board h3 span{font-size:14px;color:var(--muted);font-weight:600}
+.lb{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:14px}
+.lb th{font-family:var(--hud);font-weight:700;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);text-align:left;padding:4px 3px;border-bottom:2px solid var(--line)}
+.lb td{padding:5px 3px;border-bottom:1px solid var(--line);vertical-align:top}
+.lb td.n{font-family:var(--hud);font-weight:700;color:var(--muted);width:1.6em}
+.lb td.r{font-weight:600;overflow-wrap:anywhere}
+.lb td.r small{display:block;font-weight:400;color:var(--muted)}
+.lb th.x,.lb td.x{text-align:right;white-space:nowrap}
+.lb td.clear{color:var(--ok);font-weight:700}
+.lb tr.me td{background:#fff6d6}
+.lb .empty{color:var(--muted);padding:10px 3px}
 @media (prefers-reduced-motion:reduce){.toast{animation:none}}
 </style>
 </head>
@@ -166,7 +185,7 @@ body{background:var(--grass);color:var(--ink);font-family:var(--body);overflow:h
         </div>
         <div class="sec"><h2>Show jacket</h2><div class="row" id="jackets"></div></div>
         <p class="how"><b>How to ride:</b> steer with the arrows, change pace with up and down (walk, trot, canter, gallop). Canter into each fence and hit <b>Jump</b> when the marker reaches the green take-off zone. Rails down and refusals cost 4 faults each. Two refusals and you're eliminated. Finish inside the time allowed to avoid time faults.</p>
-        <div class="actions"><button class="btn" id="go">Enter the ring</button></div>
+        <div class="actions"><button class="btn" id="go">Enter the ring</button><button class="btn alt" id="lb-open">Leaderboard</button></div>
       </div>
     </div>
   </div>
@@ -177,6 +196,22 @@ body{background:var(--grass);color:var(--ink);font-family:var(--body);overflow:h
       <p class="verdict">Paused</p>
       <div class="actions"><button class="btn" id="resume">Keep riding</button><button class="btn alt" id="restart">Restart round</button><button class="btn alt" id="tomenu">Change class</button></div>
     </div></div>
+  </div>
+
+  <!-- leaderboard -->
+  <div class="overlay" id="board" hidden>
+    <div class="card" style="width:min(100%,980px)">
+      <div class="card-head">
+        <div class="stripes" aria-hidden="true"></div>
+        <h1>Leaderboard</h1>
+        <p>Top 10 riders in each class. Fewest faults wins, fastest time breaks ties.</p>
+      </div>
+      <div class="card-body">
+        <div class="boards" id="boards"></div>
+        <p class="lbnote" id="lb-where"></p>
+        <div class="actions"><button class="btn" id="lb-close">Back</button></div>
+      </div>
+    </div>
   </div>
 
   <!-- results -->
@@ -191,7 +226,12 @@ body{background:var(--grass);color:var(--ink);font-family:var(--body);overflow:h
           </div>
         </div>
         <table class="tbl" id="r-table"></table>
-        <div class="actions"><button class="btn" id="again">Ride again</button><button class="btn alt" id="r-menu">Change class</button></div>
+        <form class="entry" id="r-entry" hidden>
+          <p id="r-entry-msg">Top 10! Put your name on the leaderboard.</p>
+          <div class="field"><label for="r-name" class="how">Rider name</label><input id="r-name" maxlength="18" autocomplete="off" required><button class="btn" id="r-save" type="submit">Save score</button></div>
+          <p class="lbnote" id="r-status" hidden></p>
+        </form>
+        <div class="actions"><button class="btn" id="again">Ride again</button><button class="btn alt" id="r-menu">Change class</button><button class="btn alt" id="r-board">Leaderboard</button></div>
       </div>
     </div>
   </div>
@@ -292,6 +332,92 @@ const store = {
 };
 const prefs = Object.assign({ course: 'novice', coat: 'bay', jacket: 'navy', name: 'Biscuit', sound: true }, store.get('prefs', {}));
 const bests = store.get('bests', {});
+
+/* ---------- leaderboard ----------
+   Shared scores live in a Supabase table (see supabase-setup.sql in the repo).
+   Fill in the project URL and anon public key to switch it on. Until then, or if
+   the server can't be reached, scores are kept on this device only. */
+const LB = { url: '', key: '' };
+let lbShared = !!(LB.url && LB.key);
+const rank = (a, b) => a.faults - b.faults || a.seconds - b.seconds;
+function lbLocal() { return store.get('board', []); }
+async function lbTop(cls) {
+  if (LB.url && LB.key) {
+    try {
+      const r = await fetch(`${LB.url}/rest/v1/scores?select=rider,horse,faults,seconds,created_at&class=eq.${cls}&order=faults.asc,seconds.asc,created_at.asc&limit=10`,
+        { headers: { apikey: LB.key, Authorization: `Bearer ${LB.key}` } });
+      if (!r.ok) throw new Error(r.status);
+      lbShared = true;
+      return (await r.json()).map(x => Object.assign(x, { seconds: +x.seconds }));
+    } catch (e) { lbShared = false; }
+  }
+  return lbLocal().filter(x => x.class === cls).sort(rank).slice(0, 10);
+}
+async function lbSave(row) {
+  if (LB.url && LB.key && lbShared) {
+    try {
+      const r = await fetch(`${LB.url}/rest/v1/scores`, { method: 'POST',
+        headers: { apikey: LB.key, Authorization: `Bearer ${LB.key}`, 'Content-Type': 'application/json', Prefer: 'return=minimal' },
+        body: JSON.stringify(row) });
+      if (!r.ok) throw new Error(r.status);
+      return 'shared';
+    } catch (e) { /* fall through to this device */ }
+  }
+  const all = lbLocal(); all.push(Object.assign({ created_at: new Date().toISOString() }, row));
+  const keep = [];
+  COURSES.forEach(c => keep.push(...all.filter(x => x.class === c.id).sort(rank).slice(0, 10)));
+  store.set('board', keep);
+  return 'local';
+}
+function placeOf(rows, row) { let i = 0; while (i < rows.length && rank(rows[i], row) <= 0) i++; return i + 1; }
+function esc(t) { return String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]); }
+let lastSaved = null;
+async function showBoard() {
+  ['menu', 'results'].forEach(id => $(id).hidden = true);
+  $('board').hidden = false;
+  $('boards').innerHTML = COURSES.map(c => `<div class="board"><h3>${c.name} <span>${c.height.toFixed(2)} m</span></h3><table class="lb"><tbody><tr><td class="empty">Loading…</td></tr></tbody></table></div>`).join('');
+  $('lb-where').textContent = '';
+  $('lb-close').focus();
+  const lists = await Promise.all(COURSES.map(c => lbTop(c.id)));
+  $('boards').innerHTML = COURSES.map((c, i) => {
+    const rows = lists[i];
+    const body = rows.length ? rows.map((r, k) => {
+      const me = lastSaved && lastSaved.class === c.id && lastSaved.rider === r.rider && lastSaved.seconds === r.seconds && lastSaved.faults === r.faults;
+      return `<tr${me ? ' class="me"' : ''}><td class="n">${k + 1}</td><td class="r">${esc(r.rider)}<small>${esc(r.horse)}</small></td><td class="x${r.faults === 0 ? ' clear' : ''}">${r.faults === 0 ? 'Clear' : r.faults}</td><td class="x">${r.seconds.toFixed(2)}</td></tr>`;
+    }).join('') : '<tr><td class="empty" colspan="4">No rounds yet. Be the first.</td></tr>';
+    return `<div class="board"><h3>${c.name} <span>${c.height.toFixed(2)} m</span></h3><table class="lb"><thead><tr><th>#</th><th>Rider</th><th class="x">Faults</th><th class="x">Time</th></tr></thead><tbody>${body}</tbody></table></div>`;
+  }).join('');
+  $('lb-where').textContent = lbShared ? 'Scores are shared with everyone who plays.' : 'Scores are saved on this device only.';
+}
+function hideBoard() { $('board').hidden = true; if (S.mode === 'results') { $('results').hidden = false; $('again').focus(); } else { renderMenu(); $('menu').hidden = false; } }
+let pending = null;
+async function offerEntry(row) {
+  pending = null;
+  const form = $('r-entry'); form.hidden = true; $('r-status').hidden = true;
+  const rows = await lbTop(row.class);
+  if (S.mode !== 'results' || $('results').hidden) return;
+  const place = placeOf(rows, row);
+  if (place > 10) return;
+  pending = row;
+  $('r-entry-msg').textContent = `Top 10! That's #${place} in ${course.name}. Put your name on the leaderboard.`;
+  $('r-name').value = prefs.rider || '';
+  $('r-save').disabled = false;
+  form.hidden = false;
+  $('r-name').focus();
+}
+$('r-entry').addEventListener('submit', async e => {
+  e.preventDefault();
+  if (!pending) return;
+  const name = $('r-name').value.trim().slice(0, 18);
+  if (!name) { $('r-name').focus(); return; }
+  prefs.rider = name; store.set('prefs', prefs);
+  const row = Object.assign({}, pending, { rider: name }); pending = null;
+  $('r-save').disabled = true;
+  const where = await lbSave(row);
+  lastSaved = row;
+  const st = $('r-status'); st.hidden = false;
+  st.textContent = where === 'shared' ? 'Saved to the leaderboard.' : (LB.url ? "Couldn't reach the leaderboard, so it's saved on this device." : 'Saved to the leaderboard on this device.');
+});
 
 /* ---------- canvas ---------- */
 const cv = $('cv'), ctx = cv.getContext('2d');
@@ -1050,6 +1176,8 @@ function endRound() {
     `<tr><td>Time ${elim ? '' : fmt(S.time) + 's'} <span style="color:var(--muted)">(allowed ${course.ta}s)</span></td><td>${elim ? '–' : tf}</td></tr>` +
     `<tr class="total"><td>Total faults</td><td>${elim ? 'E' : f}</td></tr>`;
   $('results').hidden = false; $('controls').hidden = true; $('meter').hidden = true;
+  $('r-entry').hidden = true; pending = null;
+  if (!elim) offerEntry({ class: course.id, rider: '', horse: (prefs.name || 'Biscuit').slice(0, 18), faults: f, seconds: +S.time.toFixed(2) });
   $('again').focus();
 }
 function rosette([c1, c2, label]) {
@@ -1067,7 +1195,7 @@ function rosette([c1, c2, label]) {
 }
 function toMenu() {
   S.mode = 'menu';
-  ['results', 'pause'].forEach(id => $(id).hidden = true);
+  ['results', 'pause', 'board'].forEach(id => $(id).hidden = true);
   $('hud').hidden = true; mini.hidden = true; $('controls').hidden = true; $('keys').hidden = true; $('meter').hidden = true;
   newRound(); renderMenu(); $('menu').hidden = false;
 }
@@ -1102,6 +1230,9 @@ $('menu').addEventListener('click', e => {
 $('hname').addEventListener('input', e => { prefs.name = e.target.value.trim() || 'Biscuit'; store.set('prefs', prefs); });
 $('go').addEventListener('click', startRound);
 $('again').addEventListener('click', startRound);
+$('lb-open').addEventListener('click', showBoard);
+$('r-board').addEventListener('click', showBoard);
+$('lb-close').addEventListener('click', hideBoard);
 $('r-menu').addEventListener('click', toMenu);
 $('resume').addEventListener('click', () => pause(false));
 $('restart').addEventListener('click', startRound);
