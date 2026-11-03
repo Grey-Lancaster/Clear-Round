@@ -28,6 +28,14 @@ Pick a class, name your horse, and choose its coat and your show jacket.
 
 ![Start screen](screenshots/menu.jpg)
 
+## Sponsors
+
+When a rider enters the ring, a sponsor card flashes up for that class. The start bell and the 45-second start clock wait until the cards are done, so they never cost the rider time. The Schooling class is sponsored by Cleghorn.
+
+![The Cleghorn sponsor card at the start of a Schooling round](screenshots/sponsor.jpg)
+
+Sponsors are listed in `SPONSORS` near the top of the script in `docs/index.html`. Each class can have several, shown one after another, each with a name, an optional tag line and an optional logo (put the image in `docs/sponsors/`).
+
 ## Leaderboard
 
 Each class keeps a top 10. Fewest faults ranks first, so clear rounds always lead, and the fastest time breaks ties. A round that makes the top 10 asks for the rider's name; eliminated rounds don't count. Scores come from the game's own results; players only type their name.
