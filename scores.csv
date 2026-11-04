@@ -1,0 +1,4 @@
+id,created_at,class,rider,horse,faults,seconds
+1,"2026-11-02 23:31:35.017278+00",school,Grey,Biscuit,4,25.04
+2,"2026-11-02 23:41:27.962506+00",novice,Wadim,Biscuit,27,42.16
+3,"2026-11-03 01:52:01.891989+00",school,Grey,Harold,0,29.00
