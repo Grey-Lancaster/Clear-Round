@@ -1,0 +1,74 @@
+# Nightly backup of the Supabase leaderboard.
+# Saves every score as scores.json and scores.csv on the "backups" branch.
+# Git history on that branch keeps every past copy. Run it by hand from the Actions tab too.
+name: Back up leaderboard
+
+on:
+  schedule:
+    - cron: '43 7 * * *'   # every day at 7:43 UTC (about 3:43 AM New York)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: backup-scores
+  cancel-in-progress: false
+
+env:
+  # Same public values the game uses; the publishable key can only read and add scores.
+  SUPABASE_URL: https://ncokjnblghfrckxfuouv.supabase.co
+  SUPABASE_KEY: sb_publishable_CfgIGYlNgh6Fz_60cnDLdA_D-KtM3bs
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the backups branch (or start it)
+        run: |
+          git init -q backup && cd backup
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          git config user.name "leaderboard-backup"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git fetch -q --depth 1 origin backups; then
+            git checkout -q -b backups FETCH_HEAD
+          else
+            git checkout -q --orphan backups
+          fi
+
+      - name: Download every score
+        working-directory: backup
+        run: |
+          set -euo pipefail
+          q="$SUPABASE_URL/rest/v1/scores?select=*&order=id.asc"
+          h=(-H "apikey: $SUPABASE_KEY" -H "Range-Unit: items" -H "Range: 0-99999")
+          curl -fsS "${h[@]}" -H "Accept: application/json" "$q" -o scores.json.new
+          curl -fsS "${h[@]}" -H "Accept: text/csv" "$q" -o scores.csv.new
+          # refuse to overwrite a good backup with something that isn't a list of scores
+          python3 -c "import json,sys; d=json.load(open('scores.json.new')); assert isinstance(d,list); print(len(d),'scores')"
+          mv scores.json.new scores.json && mv scores.csv.new scores.csv
+          cat > README.md <<'EOF'
+          # Leaderboard backups
+
+          Nightly copy of the Clear Round `scores` table from Supabase, made by
+          `.github/workflows/backup-scores.yml` on the main branch.
+
+          - `scores.json` and `scores.csv` hold every score at the last backup.
+          - Each day's copy is a commit on this branch, so older versions are in the history.
+
+          To restore: in Supabase open Table Editor → scores → Insert → Import data from CSV,
+          and choose `scores.csv` (or the version you want from the history).
+          EOF
+          sed -i 's/^          //' README.md
+
+      - name: Save if anything changed
+        working-directory: backup
+        run: |
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No new scores since the last backup."
+          else
+            git commit -q -m "Leaderboard backup $(date -u +%Y-%m-%d)"
+            git push -q origin backups
+            echo "Backup saved."
+          fi

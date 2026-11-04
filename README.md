@@ -54,6 +54,10 @@ Scores are stored in a Supabase table. If it isn't configured or can't be reache
 2. Open the SQL Editor, paste in `supabase-setup.sql`, and run it.
 3. In Project Settings → API, copy the Project URL and the publishable (`anon`) key into the `LB` line near the top of the script in `docs/index.html`. Never put the secret / `service_role` key there.
 
+### Backups
+
+The free Supabase plan has no backups, so a GitHub Action (`.github/workflows/backup-scores.yml`) copies every score each night to the [`backups` branch](../../tree/backups) as `scores.json` and `scores.csv`. Every day's copy is kept in that branch's history. To run it now, open the **Actions** tab, pick **Back up leaderboard** and click **Run workflow**. To restore, import `scores.csv` in Supabase under Table Editor → scores → Insert → Import data from CSV.
+
 ## On a phone
 
 <img src="screenshots/phone.jpg" alt="Playing on a phone with the touch controls" width="300">
